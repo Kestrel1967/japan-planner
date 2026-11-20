@@ -3,5 +3,5 @@
    Example: API_URL: 'https://script.google.com/macros/s/AKfy...long.../exec'
    The passcode does NOT go here - each phone asks for it once. */
 window.CONFIG = {
-  API_URL: ''
+  API_URL: 'https://script.google.com/macros/s/AKfycbwOR1gWj9Gs9Pdm3NTFkXINjmRX0H-GCOVRelUXOjZeYXCV-2pi3Ocj3osPAML3KeETxg/exec'
 };
