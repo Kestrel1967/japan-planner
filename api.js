@@ -37,4 +37,13 @@
         return j;
       });
   };
+  // the place name behind a short Google Maps link (the sheet's script opens the link); '' when it cannot be read
+  A.resolve = function (link) {
+    if (!A.url()) return Promise.resolve('');
+    var ctl = root.AbortController ? new AbortController() : null, timer = ctl ? setTimeout(function () { ctl.abort(); }, 15000) : 0;
+    return fetch(A.url(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, redirect: 'follow', signal: ctl ? ctl.signal : undefined,
+      body: JSON.stringify({ key: A.key(), action: 'resolve', url: link }) })
+      .then(function (r) { clearTimeout(timer); return r.ok ? r.json() : {}; })
+      .then(function (j) { return (j && typeof j.name === 'string') ? j.name : ''; }, function () { clearTimeout(timer); return ''; });
+  };
 })(window);
