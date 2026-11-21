@@ -5,7 +5,7 @@
   'use strict';
   var SC = window.SCHEMA, TABS = SC.tabs, LS = window.localStorage;
   var app = document.getElementById('app'), overlay = document.getElementById('overlay'), toastEl = document.getElementById('toast');
-  var VERSION = '2.8';
+  var VERSION = '2.9';
 
   // ------------------------------------------------------------------ storage
   function sk(k) { return window.JP_PREVIEW ? k.replace(/^jp_/, 'jpv_') : k; }   // preview keeps its own data
@@ -20,8 +20,9 @@
     tab: get('jp_tab', ''), day: get('jp_day', -1), filters: {},
     view: 'main', sync: 'idle', syncMsg: '', lastSync: get('jp_last', 0), data: null, fresh: {}
   };
-  S.tabs4 = S.tabs4.map(function (t) { return t === 'bookings' ? 'attractions' : t; });          // renamed in 2.8
-  if (S.tab === 'bookings') S.tab = 'attractions';
+  var RENAMED = { bookings: 'attractions', money: 'expenses' };                                // renamed in 2.8 / 2.9
+  S.tabs4 = S.tabs4.map(function (t) { return RENAMED[t] || t; });
+  if (RENAMED[S.tab]) S.tab = RENAMED[S.tab];
   if (!byId(S.tab)) S.tab = S.tabs4[0];
   function byId(id) { for (var i = 0; i < TABS.length; i++) if (TABS[i].id === id) return TABS[i]; return null; }
   function def(sheet) { return SC.sheets[sheet]; }
@@ -47,7 +48,7 @@
     plan.forEach(function (r) { byRid[r.id] = r; });
     var HOTEL = { Hotel: 'End hotel', 'Start hotel': 'Start hotel' };
     function fix(v) {                             // an item's fields in the new layout
-      if (v.Part === 'Bookings') v.Part = v.Time ? partOf(v.Time) : 'Any time';
+      if (v.Part === 'Bookings') v.Part = v.Time ? partOf(v.Time) : 'Evening';
       if ('From' in v) { v.Type = TYPE[v.From] || 'Own'; delete v.From; }
       return v;
     }
@@ -77,7 +78,18 @@
     set('jp_data', b); set('jp_ops', S.ops);
   }
   // the Google Sheet answers in the layout before 2.8: its script was not updated yet
-  function oldLayout(data) { return !!(data && data.sheets && !data.sheets.Days && (data.sheets['Day plan'] || data.sheets.Bookings)); }
+  function oldLayout(data) { var x = data && data.sheets; return !!(x && ((!x.Days && (x['Day plan'] || x.Bookings)) || (!x.Expenses && x.Budget))); }
+  // 2.9: Budget became Expenses (Item / description -> Name, Actual amount -> Price)
+  function upgradeBudget() {
+    var b = S.base;
+    if (!b || !b.sheets || !('Budget' in b.sheets) || ('Expenses' in b.sheets)) return;
+    var ren = { 'Item / description': 'Name', 'Actual amount': 'Price' };
+    function fix(v) { Object.keys(ren).forEach(function (k) { if (k in v) { if (!(ren[k] in v)) v[ren[k]] = v[k]; delete v[k]; } }); return v; }
+    b.sheets.Expenses = (b.sheets.Budget || []).map(function (r) { fix(r.v); return r; });
+    delete b.sheets.Budget;
+    S.ops.forEach(function (op) { if (op.sheet === 'Budget') { op.sheet = 'Expenses'; if (op.v) fix(op.v); } });
+    set('jp_data', b); set('jp_ops', S.ops);
+  }
   var OLD_MSG = 'The Google Sheet still has the old layout. Update its script and run setup (see the update steps). Your changes are kept on this phone until then.';
   function practiceData() {                       // an empty planner for practice mode
     var d = { sheets: {}, lists: clone(SC.listDefaults) }, MS = 86400000, start = Date.UTC(2027, 3, 8);
@@ -126,11 +138,11 @@
       return Promise.resolve();
     }
     syncing = true; setSync('busy');
-    var checked = get('jp_layout', '') === '2.8', sent = checked ? S.ops.slice() : [];   // first sync after the update: look before sending
+    var checked = get('jp_layout', '') === '2.9', sent = checked ? S.ops.slice() : [];   // first sync after the update: look before sending
     syncPromise = Api.call(sent.length ? 'push' : 'pull', sent).then(function (res) {
       syncing = false;
       if (oldLayout(res.data)) { setSync('error', OLD_MSG); render(); if (manualTap) toast(OLD_MSG); return; }
-      if (!checked) set('jp_layout', '2.8');
+      if (!checked) set('jp_layout', '2.9');
       var ids = {}; sent.forEach(function (o) { ids[o.id] = 1; });
       S.ops = S.ops.filter(function (o) { return !ids[o.id]; });
       S.base = normalize(res.data); S.lastSync = Date.now();
@@ -201,7 +213,7 @@
     days: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>',
     places: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
     food: '<path d="M4 11h16a8 8 0 0 1-16 0z"/><path d="M9 3v4M13 3v4M17 3v4M8 21h8"/>',
-    money: '<circle cx="12" cy="12" r="9"/><path d="M9 7l3 5 3-5M12 12v5M9 13h6"/>',
+    expenses: '<circle cx="12" cy="12" r="9"/><path d="M9 7l3 5 3-5M12 12v5M9 13h6"/>',
     flights: '<path d="M3 13l18-7-6 14-3-6-9-1z"/>',
     hotels: '<path d="M3 20V8M3 15h18v5M21 15v-2a3 3 0 0 0-3-3h-7v5"/><circle cx="7" cy="11.5" r="1.5"/>',
     transport: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14M9 21l2-4M15 21l-2-4M9 14h.01M15 14h.01"/>',
@@ -258,7 +270,7 @@
     return [
       h('header', { class: 'top' + (window.JP_PREVIEW ? ' preview' : '') }, [h('h1', { text: (window.JP_PREVIEW ? 'PREVIEW · ' : '') + title }), h('button', { type: 'button', id: 'pill', class: 'pill', onclick: pillTap })]),
       h('main', { class: 'main' }, body),
-      fab || null,
+      fab ? h('div', { class: 'fabdock' }, [fab]) : null,
       h('nav', { class: 'bar', 'aria-label': 'Sections' }, [bar,
         h('button', { type: 'button', class: 'tab more' + (S.view !== 'main' ? ' on' : ''), onclick: openMore }, [icon('more'), h('span', { text: 'More' })])])
     ];
@@ -276,6 +288,7 @@
     else if (S.view === 'settings') nodes = frame('Settings', settingsView());
     else if (S.tab === 'days') nodes = frame('Days', daysView());
     else if (S.tab === 'itinerary') nodes = frame('Itinerary', itinView());
+    else if (S.tab === 'expenses') nodes = expensesView();
     else nodes = listView(byId(S.tab));
     app.textContent = ''; nodes.forEach(function (n) { if (n) app.appendChild(n); });
     paintPill();
@@ -303,10 +316,7 @@
       return h('button', { type: 'button', class: 'chip sm', onclick: fn }, [h('span', { class: 'clabel', text: label }), h('span', { class: 'cval' + (val ? (cls || '') : ' none'), dir: 'auto', text: val || empty || 'Not set' })]);
     }
     function field1(label, fields, title) { return function () { editFields('Days', d, fields, when + ' · ' + (title || label)); }; }
-    // cost: estimate, actual, and how far the actual is above or below the estimate
-    var est = parseFloat(v['Est. cost']), act = parseFloat(v['Actual cost']), cur = v.Currency ? ' ' + v.Currency : '', diff = '', dcls = '';
-    if (est > 0 && !isNaN(act)) { var pct = Math.round((act - est) / est * 100); diff = (pct > 0 ? '+' : '') + pct + '%'; dcls = pct > 0 ? ' over' : pct < 0 ? ' under' : ''; }
-    var cost = field1('Cost', ['Est. cost', 'Actual cost', 'Currency']);
+    var spent = sumByCur(expensesOn(v.Date));
     var tb = toBook(v.Date), tbVal = tb.length ? (tb[0].v.What || '(no name)') + (tb.length > 1 ? '  +' + (tb.length - 1) : '') : '';
     return [
       h('div', { class: 'dayhead' }, [
@@ -320,8 +330,10 @@
       h('div', { class: 'blocks' }, ['Morning', 'Afternoon', 'Evening', 'Food'].map(function (id) { return bigPart(d, part(id)); })),
       h('div', { class: 'rowx' }, [small('Sleeping at', v['End hotel'], function () { cityForm(list, S.day); }), smallPart(d, part('Transport'), small)]),
       h('div', { class: 'rowx' }, [small('Tickets to book', tbVal, function () { ticketsSheet(d, tb); }, '', 'Nothing to book'), small('Day type', v['Day type'], field1('Day type', ['Day type']))]),
-      h('div', { class: 'rowx' }, [small('Est. cost', v['Est. cost'] ? fmtNum(v['Est. cost']) + cur : '', cost), small('Actual cost', v['Actual cost'] ? fmtNum(v['Actual cost']) + cur : '', cost), small('Difference', diff, cost, dcls)]),
-      h('div', { class: 'rowx' }, [smallPart(d, part('Any time'), small), small('Notes', v.Notes, field1('Notes', ['Notes']))])
+      h('div', { class: 'rowx' }, [
+        h('button', { type: 'button', class: 'chip sm addexp', onclick: function () { expenseForm(null, v.Date); } }, [icon('plus'), h('span', { text: 'Add expense' })]),
+        small('Spent today', spent, function () { var f = expFilter(); f.mode = 'day'; f.day = v.Date; go('expenses'); }, '', 'Nothing yet')]),
+      h('div', { class: 'rowx notes' }, [small('Notes', v.Notes, field1('Notes', ['Notes']))])
     ];
   }
   // attractions on this day that still need a ticket (not Booked, Paid or Cancelled)
@@ -347,15 +359,24 @@
     { id: 'Afternoon', label: 'Afternoon', icon: 'noon', tint: '#FCE0C5', from: ['places', 'attractions', 'shopping', 'ideas'] },
     { id: 'Evening', label: 'Evening', icon: 'moon', tint: '#D9D2E9', from: ['places', 'attractions', 'shopping', 'ideas'] },
     { id: 'Food', label: 'Food plans', icon: 'food', tint: '#F4CCCC', from: ['food'] },
-    { id: 'Transport', label: 'Transport', icon: 'transport', tint: '#C9E7EC', from: ['transport', 'flights'] },
-    { id: 'Any time', label: 'Any time', icon: 'clock', tint: '#E2EFDA', from: ['places', 'attractions', 'shopping', 'ideas'] }
+    { id: 'Transport', label: 'Transport', icon: 'transport', tint: '#C9E7EC', from: ['transport', 'flights'] }
   ];
-  function part(id) { for (var i = 0; i < PARTS.length; i++) if (PARTS[i].id === id) return PARTS[i]; return PARTS[PARTS.length - 1]; }
+  function part(id) { for (var i = 0; i < PARTS.length; i++) if (PARTS[i].id === id) return PARTS[i]; return PARTS[2]; }   // anything else: Evening
   function byTime(a, b) { var x = a.v.Time || '99', y = b.v.Time || '99'; return x < y ? -1 : x > y ? 1 : 0; }
-  function planItems(date, p) { return (S.data.sheets.Itinerary || []).filter(function (r) { return r.v.Date === date && (r.v.Part || 'Any time') === p; }).sort(byTime); }
-  // the whole day in hour order; an item without an hour sits at the end of its part
-  var PART_END = { Morning: '11:59', Afternoon: '16:59', Evening: '22:59', Food: '23:50', Transport: '23:55' };
-  function itemKey(r) { return r.v.Time || PART_END[r.v.Part] || '99'; }
+  // the box an item lives in when it has no hour (Food, Transport, or the part it was added to; Evening when none)
+  function homePart(r) { var p = r.v.Part || ''; return p === 'Food' || p === 'Transport' || FREE.indexOf(p) >= 0 ? p : 'Evening'; }
+  // Morning / Afternoon / Evening: everything whose hour falls there (food and transport too), then the items without an hour that live there.
+  // Food: all of the day's food. Transport: trips between cities.
+  function planItems(date, p) {
+    return (S.data.sheets.Itinerary || []).filter(function (r) {
+      if (r.v.Date !== date) return false;
+      var t = padTime(r.v.Time), home = homePart(r);
+      if (p === 'Food' || p === 'Transport') return home === p;
+      return t ? partOf(t) === p : home === p;
+    }).sort(byTime);
+  }
+  // the whole day in hour order; items without an hour at the end of the day
+  function itemKey(r) { return r.v.Time || '99'; }
   function dayItems(date) {
     return (S.data.sheets.Itinerary || []).filter(function (r) { return r.v.Date === date; })
       .sort(function (a, b) { var x = itemKey(a), y = itemKey(b); return x < y ? -1 : x > y ? 1 : (a.v.Name || '') < (b.v.Name || '') ? -1 : 1; });
@@ -372,7 +393,7 @@
   var SRC = [
     { sheet: 'Flights', tab: 'flights', type: 'Flight', part: 'Transport', date: 'Departure date', time: 'Departs (local)',
       name: function (v) { return [v['From (airport)'], v['To (airport)']].filter(Boolean).join(' → ') + (v['Flight no.'] ? ' · ' + v['Flight no.'] : ''); } },
-    { sheet: 'Transport', tab: 'transport', type: 'Transport', part: 'Transport', date: 'Date', time: 'Departs',
+    { sheet: 'Transport', tab: 'transport', type: 'Transport', part: intercity, date: 'Date', time: 'Departs',
       name: function (v) { return [v.From, v.To].filter(Boolean).join(' → ') + (v.Type ? ' · ' + v.Type : ''); } },
     { sheet: 'Attractions', tab: 'attractions', type: 'Attraction', date: 'Visit date', time: 'Time', link: 'Where to book (link)', name: function (v) { return v.What || ''; } },
     { sheet: 'Food', tab: 'food', type: 'Food', part: 'Food', date: 'Planned day', time: 'Planned time', link: 'Map link', name: function (v) { return v.Name || ''; } },
@@ -380,7 +401,10 @@
     { sheet: 'Shopping', tab: 'shopping', type: 'Shopping', date: 'Planned day', time: 'Planned time',
       name: function (v) { return (v.Item || '') + (v['Shop / brand'] ? ' (' + v['Shop / brand'] + ')' : ''); } }
   ];
-  var FREE = ['Morning', 'Afternoon', 'Evening', 'Any time'], ISO = /^\d{4}-\d{2}-\d{2}$/;
+  var FREE = ['Morning', 'Afternoon', 'Evening'], ISO = /^\d{4}-\d{2}-\d{2}$/;
+  // a trip between two cities goes in the Transport box; inside one city it is placed by its hour like anything else
+  function intercity(v) { var a = v['Origin city'] || '', b = v['Destination city'] || ''; return a && b && a === b ? '' : 'Transport'; }
+  function fixedPart(s, v) { return typeof s.part === 'function' ? s.part(v) : s.part || ''; }
   function srcByTab(tab) { for (var i = 0; i < SRC.length; i++) if (SRC[i].tab === tab) return SRC[i]; return null; }
   function srcBySheet(sh) { for (var i = 0; i < SRC.length; i++) if (SRC[i].sheet === sh) return SRC[i]; return null; }
   function autoId(sheet, id) { return 'auto-' + sheet.replace(/[^A-Za-z]/g, '') + '-' + id; }
@@ -388,7 +412,7 @@
   function padTime(t) { var m = /^(\d{1,2}):(\d{2})$/.exec(t || ''); return m ? ('0' + m[1]).slice(-2) + ':' + m[2] : ''; }
   function autoVals(s, r, oldPart) {
     var v = r.v, time = padTime(v[s.time]), link = s.link ? v[s.link] || '' : '';
-    return { Date: v[s.date], Time: time, Part: s.part || (time ? partOf(time) : FREE.indexOf(oldPart) >= 0 ? oldPart : 'Any time'),
+    return { Date: v[s.date], Time: time, Part: fixedPart(s, v) || (time ? partOf(time) : FREE.indexOf(oldPart) >= 0 ? oldPart : 'Evening'),
       Name: s.name(v) || '(no name)', Type: s.type, 'Map link': isMap(link) ? link : '', Website: link && !isMap(link) ? link : '', Source: s.sheet + ':' + r.id };
   }
   function reconcileLocal(d) {
@@ -449,15 +473,14 @@
     return named ? n : n + ', ' + city;           // the name already says which city: leave it as it is
   }
   function dayStops(date) {
-    var items = [];
-    ROUTE_PARTS.forEach(function (p, pi) {
-      planItems(date, p).forEach(function (r, i) {
-        // no hour: Morning goes before noon, Afternoon and Evening after it, Food without an hour at the end
-        var t = r.v.Time || ['11:59', '17:59', '23:58', '23:59'][pi];
-        items.push({ r: r, key: t + '|' + pi + '|' + ('00' + i).slice(-3) });
+    var out = [], seen = {}, moving = { Transport: 1, Flight: 1 };
+    ['Morning', 'Afternoon', 'Evening', 'Food'].forEach(function (p) {
+      planItems(date, p).forEach(function (r) {
+        if (seen[r.id] || moving[r.v.Type] || (p === 'Food' && r.v.Time)) return;   // timed food is already in its time part
+        seen[r.id] = 1; out.push(r);
       });
     });
-    return items.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; }).map(function (x) { return x.r; });
+    return out;                                   // Morning, Afternoon, Evening by hour, then food without an hour
   }
   function routeUrl(list, idx) {
     var day = list[idx], v = day.v, prev = idx > 0 ? list[idx - 1].v : {};
@@ -502,11 +525,11 @@
     return small(p.label, val, function () { tapPart(day, p, items); }, '', 'Tap to add');
   }
   function itemRow(day, r, back, showPart) {
-    var p = part(r.v.Part), tag = r.v.Source ? r.v.Type : '';
+    var t = padTime(r.v.Time), home = homePart(r), p = part(home !== 'Food' && home !== 'Transport' && t ? partOf(t) : home), tag = r.v.Source ? r.v.Type : '';
     return h('div', { class: 'pitem' }, [
       h('button', { type: 'button', class: 'pmain', onclick: function () { planForm(day, p, r, back); } }, [
         showPart ? h('span', { class: 'pico' }, [icon(p.icon)]) : null,
-        h('span', { class: 'ptime' + (r.v.Time ? '' : ' soft'), text: r.v.Time || (showPart ? (p.id === 'Any time' ? 'any' : '') : '') }),
+        h('span', { class: 'ptime' + (r.v.Time ? '' : ' soft'), text: r.v.Time || (showPart ? '—' : '') }),
         h('span', { class: 'pname', dir: 'auto' }, [r.v.Name || '(no name)', tag || r.v.Notes ? h('span', { class: 'pnote', dir: 'auto', text: [tag, r.v.Notes].filter(Boolean).join(' · ') }) : null])]),
       linkBtn('Map', r.v['Map link']), linkBtn('Web', r.v.Website)]);
   }
@@ -575,16 +598,16 @@
         if ((r.v[s.date] || '') !== date) o[s.date] = date;
         if ((r.v[s.time] || '') !== time) o[s.time] = time;
         if (Object.keys(o).length) change(s.sheet, r, o);
-        var a = { Date: date, Part: s.part || (time ? partOf(time) : FREE.indexOf(p.id) >= 0 ? p.id : 'Any time') };
+        var a = { Date: date, Part: fixedPart(s, r.v) || (time ? partOf(time) : FREE.indexOf(p.id) >= 0 ? p.id : 'Evening') };
         if (notes) a.Notes = notes;
         setAuto(s, r, a);
-        done(); toast(a.Part !== p.id ? 'Saved in ' + part(a.Part).label + ' (by its hour)' : 'Saved');
+        done(); toast(a.Part !== p.id && !(time && FREE.indexOf(p.id) >= 0 && partOf(time) === p.id) ? 'Saved in ' + part(a.Part).label + (time ? ' (by its hour)' : '') : 'Saved');
         return;
       }
       var now = { 'Name': inp(fName).value.trim(), 'Time': time, 'Map link': inp(fMap).value.trim(), 'Website': inp(fWeb).value.trim(), 'Notes': notes }, out = {};
       if (!now.Name) { toast('Give it a name, or pick one from the list'); return; }
       Object.keys(now).forEach(function (k) { if (now[k] !== (v[k] || '')) out[k] = now[k]; });
-      if (!rec) { out.Date = date; out.Part = p.id; out.Type = 'Own'; Object.keys(out).forEach(function (k) { if (out[k] === '') delete out[k]; }); change('Itinerary', null, out); }
+      if (!rec) { out.Date = date; out.Part = time && FREE.indexOf(p.id) >= 0 ? partOf(time) : p.id; out.Type = 'Own'; Object.keys(out).forEach(function (k) { if (out[k] === '') delete out[k]; }); change('Itinerary', null, out); }
       else if (Object.keys(out).length) change('Itinerary', rec, out);
       done(); toast('Saved');
     }));
@@ -709,6 +732,112 @@
     });
     out.push(h('div', { class: 'spacer' }));
     return out;
+  }
+
+  // ------------------------------------------------------------------ Expenses
+  var CUR_SIGN = { JPY: '¥', USD: '$', ILS: '₪', EUR: '€' }, CUR_ORDER = ['JPY', 'USD', 'ILS', 'EUR'];
+  function money(n, c) { return CUR_SIGN[c] ? CUR_SIGN[c] + fmtNum(Math.round(n * 100) / 100) : fmtNum(Math.round(n * 100) / 100) + ' ' + (c || ''); }
+  function sumByCur(rows) {                       // "¥12,300 + $40": each currency on its own, no exchange rates
+    var by = {};
+    rows.forEach(function (r) { var p = parseFloat(String(r.v.Price || '').replace(/,/g, '')); if (!isNaN(p)) { var c = r.v.Currency || 'JPY'; by[c] = (by[c] || 0) + p; } });
+    return Object.keys(by).sort(function (a, b) { return (CUR_ORDER.indexOf(a) + 1 || 99) - (CUR_ORDER.indexOf(b) + 1 || 99); }).map(function (c) { return money(by[c], c); }).join(' + ');
+  }
+  function expenses() { return (S.data.sheets.Expenses || []).slice(); }
+  function expensesOn(date) { return expenses().filter(function (r) { return r.v.Date === date; }); }
+  function expCat(v) { return v.Category === 'Other' && v['Other category'] ? v['Other category'] : v.Category || ''; }
+  function expFilter() { return S.filters.expenses = S.filters.expenses || { mode: 'trip' }; }
+  function nowTime() { var d = new Date(); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+  function dayCity(date) {                        // the city of that day, for a new expense
+    var d = days().filter(function (x) { return x.v.Date === date; })[0];
+    return d ? d.v['Ends in'] || d.v['Starts in'] || '' : '';
+  }
+  function expensesView() {
+    var t = byId('expenses'), f = expFilter(), all = expenses(), dates = S.data.tripDates || [];
+    function opts(label, vals, cur, key) {
+      var sel = h('select', { class: 'fsel' + (cur ? ' on' : ''), 'aria-label': label, onchange: function () { f[key] = this.value; render(); } },
+        [h('option', { value: '', text: label })].concat(vals.map(function (o) { return h('option', { value: o, text: o }); })));
+      sel.value = cur || ''; return sel;
+    }
+    var cats = {}, cities = {};
+    all.forEach(function (r) { var c = expCat(r.v); if (c) cats[c] = 1; if (r.v.City) cities[r.v.City] = 1; });
+    if (f.cat && !cats[f.cat]) f.cat = ''; if (f.city && !cities[f.city]) f.city = '';
+    function dateSel(key, label) {
+      var sel = h('select', { class: 'fsel on', 'aria-label': label, onchange: function () { f[key] = this.value; render(); } }, dates.map(function (d) { return h('option', { value: d, text: fmtDate(d) }); }));
+      if (!f[key] || dates.indexOf(f[key]) < 0) f[key] = dates.indexOf(today()) >= 0 ? today() : (key === 'to' ? dates[dates.length - 1] : dates[0]) || '';
+      sel.value = f[key]; return sel;
+    }
+    var modes = h('div', { class: 'seg' }, [['day', 'One day'], ['range', 'Days range'], ['trip', 'Whole trip']].map(function (m) {
+      return h('button', { type: 'button', class: 'segb' + (f.mode === m[0] ? ' on' : ''), onclick: function () { f.mode = m[0]; render(); } }, [m[1]]);
+    }));
+    var body = [h('div', { class: 'filters' }, [opts('All categories', Object.keys(cats).sort(), f.cat, 'cat'), opts('All places', Object.keys(cities).sort(), f.city, 'city')]), modes];
+    if (f.mode === 'day' && dates.length) body.push(h('div', { class: 'filters' }, [dateSel('day', 'Day')]));
+    if (f.mode === 'range' && dates.length) body.push(h('div', { class: 'filters' }, [h('span', { class: 'flab', text: 'From' }), dateSel('from', 'From'), h('span', { class: 'flab', text: 'to' }), dateSel('to', 'To')]));
+    var rows = all.filter(function (r) {
+      var v = r.v;
+      if (f.cat && expCat(v) !== f.cat) return false;
+      if (f.city && v.City !== f.city) return false;
+      if (f.mode === 'day' && v.Date !== f.day) return false;
+      if (f.mode === 'range' && (!v.Date || v.Date < (f.from <= f.to ? f.from : f.to) || v.Date > (f.from <= f.to ? f.to : f.from))) return false;
+      return true;
+    }).sort(function (a, b) { var x = (a.v.Date || '') + (a.v.Time || ''), y = (b.v.Date || '') + (b.v.Time || ''); return x < y ? 1 : x > y ? -1 : 0; });
+    body.push(h('div', { class: 'expsum' }, [h('span', { class: 'l', text: rows.length + (rows.length === 1 ? ' expense' : ' expenses') }), h('b', { text: sumByCur(rows) || '—' })]));
+    if (!all.length) body.push(h('p', { class: 'empty', text: S.base ? 'No expenses yet. Tap + to add the first one.' : 'Loading…' }));
+    else if (!rows.length) body.push(h('p', { class: 'empty', text: 'Nothing matches these filters.' }));
+    rows.forEach(function (r) {
+      var v = r.v, sub = [v.Date ? fmtDate(v.Date) + (v.Time ? ' ' + v.Time : '') : '', expCat(v), [v.City, v.Place].filter(Boolean).join(', '), v['Paid by']].filter(Boolean).join(' · ');
+      var right = [h('span', { class: 'amt', text: v.Price ? money(parseFloat(String(v.Price).replace(/,/g, '')) || 0, v.Currency || 'JPY') : '' })];
+      if (r.wait) right.push(h('span', { class: 'waitdot', title: 'Waiting to be saved', text: '●' }));
+      body.push(h('div', { class: 'card' }, [h('button', { type: 'button', class: 'cbody', onclick: function () { expenseForm(r); } }, [h('span', { class: 'ctitle', dir: 'auto', text: v.Name || expCat(v) || '(no name)' }), h('span', { class: 'csub', dir: 'auto', text: sub })]), h('div', { class: 'cright' }, right)]));
+    });
+    body.push(h('div', { class: 'spacer' }));
+    return frame(t.label, body, h('button', { type: 'button', class: 'fab', 'aria-label': 'Add expense', onclick: function () { expenseForm(null, null); } }, [icon('plus')]));
+  }
+  // rec = an expense to change, or null for a new one; date = the day on screen (null = now)
+  function expenseForm(rec, date) {
+    var v = rec ? rec.v : {}, sheet = 'Expenses';
+    var when = rec ? '' : (date || today());
+    var fName = field(sheet, col(sheet, 'Name'), v.Name || '');
+    var fCat = field(sheet, col(sheet, 'Category'), v.Category || '');
+    var fOther = field(sheet, col(sheet, 'Other category'), v['Other category'] || '');
+    fOther.querySelector('label').textContent = 'Your category';
+    var catSel = fCat.querySelector('select');
+    function showOther() { var c = fCat.querySelector('[data-h]'); fOther.hidden = !(c && c.value === 'Other'); }
+    if (catSel) catSel.addEventListener('change', guard(showOther));
+    var price = h('input', { id: 'f_Price', 'data-h': 'Price', type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0' }); price.value = v.Price || '';
+    var curs = CUR_ORDER.slice(); (S.data.lists.L_Currency || []).concat(v.Currency ? [v.Currency] : []).forEach(function (c) { if (curs.indexOf(c) < 0) curs.push(c); });
+    var cur = h('select', { id: 'f_Currency', 'aria-label': 'Currency' }, curs.map(function (c) { return h('option', { value: c, text: (CUR_SIGN[c] ? CUR_SIGN[c] + ' ' : '') + c }); }));
+    cur.value = v.Currency || get('jp_lastCur', 'JPY') || 'JPY';
+    var fPrice = h('div', { class: 'field' }, [h('label', { for: 'f_Price', text: 'Price' }), h('div', { class: 'pricerow' }, [price, cur])]);
+    var fPaid = field(sheet, col(sheet, 'Paid by'), rec ? v['Paid by'] || '' : get('jp_who', ''));
+    var fCity = field(sheet, col(sheet, 'City'), rec ? v.City || '' : dayCity(when) || get('jp_lastCity', ''));
+    var fPlace = field(sheet, col(sheet, 'Place'), v.Place || '');
+    fCity.querySelector('label').textContent = 'Location'; fPlace.querySelector('label').textContent = 'Place (optional)';
+    var loc = h('div', { class: 'locrow' }, [fCity, fPlace]);
+    var nodes = [h('h2', { class: 'withico' }, [icon('expenses'), rec ? 'Expense' : 'Add expense · ' + fmtDate(when)]), fName, fCat, fOther, fPrice, fPaid, loc];
+    var fDate, fTime;
+    if (rec) { fDate = field(sheet, col(sheet, 'Date'), v.Date || ''); fTime = field(sheet, col(sheet, 'Time'), v.Time || ''); nodes.push(h('div', { class: 'locrow' }, [fDate, fTime])); }
+    else nodes.push(h('p', { class: 'note', text: 'Date and time: ' + fmtDate(when) + ', the hour when you press Save.' }));
+    function val(f) { var el = f.querySelector('[data-h]'); return el && el.value !== '\u0001new' ? el.value.trim() : ''; }
+    nodes.push(btn('Save', 'primary block', function () {
+      var p = price.value.trim().replace(/,/g, '').replace(/[^\d.]/g, '');
+      if (!p || isNaN(parseFloat(p))) { toast('Enter the price'); price.focus(); return; }
+      var now = { 'Name': val(fName), 'Category': val(fCat), 'Other category': val(fCat) === 'Other' ? val(fOther) : '', 'Price': String(parseFloat(p)), 'Currency': cur.value,
+        'Paid by': val(fPaid), 'City': val(fCity), 'Place': val(fPlace) };
+      if (rec) { now.Date = val(fDate); now.Time = val(fTime); } else { now.Date = when; now.Time = nowTime(); }
+      var out = {};
+      Object.keys(now).forEach(function (k) { if (now[k] !== (v[k] || '')) out[k] = now[k]; });
+      set('jp_lastCur', cur.value); if (now.City) set('jp_lastCity', now.City);
+      if (!rec) { Object.keys(out).forEach(function (k) { if (out[k] === '') delete out[k]; }); change(sheet, null, out); }
+      else if (Object.keys(out).length) change(sheet, rec, out);
+      closeSheet(); toast('Saved');
+    }));
+    nodes.push(btn('Cancel', 'block', closeSheet));
+    if (rec) nodes.push(btn('Delete this expense', 'danger block', function () {
+      openSheet([h('h2', { text: 'Delete this expense?' }), h('p', { text: (v.Name || expCat(v) || 'Expense') + (v.Price ? ' · ' + money(parseFloat(v.Price) || 0, v.Currency || 'JPY') : '') }),
+        btn('Yes, delete', 'danger block', function () { closeSheet(); change(sheet, rec, null, true); toast('Deleted'); }), btn('No, keep it', 'block', closeSheet)]);
+    }));
+    openSheet(nodes, 'form');
+    showOther();
   }
 
   // ------------------------------------------------------------------ lists (every other section)
@@ -1047,7 +1176,7 @@
         rows.forEach(function (r) {
           var v = {}; d.cols.forEach(function (c) { if (c.k !== 'auto' && !c.calc && r.v[c.h] && !(d.fixed && d.fixed.indexOf(c.h) >= 0)) v[c.h] = r.v[c.h]; });
           if (n === 'Days') {                       // the day's summary: each part's items, one per line
-            var colOf = { Morning: 'Morning', Afternoon: 'Afternoon', Evening: 'Evening', Food: 'Food plans', Transport: 'Transport today', 'Any time': 'Any time' };
+            var colOf = { Morning: 'Morning', Afternoon: 'Afternoon', Evening: 'Evening', Food: 'Food plans', Transport: 'Transport today' };
             PARTS.forEach(function (p) {
               var lines = planItems(r.v.Date, p.id).map(function (x) { return (x.v.Time ? x.v.Time + ' ' : '') + (x.v.Name || ''); });
               if (lines.length) v[colOf[p.id]] = lines.join('\n');
@@ -1099,7 +1228,7 @@
       var b = this; b.disabled = true; b.textContent = 'Connecting…';
       return Api.call('pull').then(function (res) {
         if (oldLayout(res.data)) { b.disabled = false; b.textContent = 'Connect'; toast(OLD_MSG); return; }
-        set('jp_layout', '2.8');
+        set('jp_layout', '2.9');
         closeSheet();
         if (S.mode !== 'sheet') { S.ops = []; S.mode = 'sheet'; set('jp_mode', 'sheet'); }
         S.base = normalize(res.data); S.lastSync = Date.now(); set('jp_data', S.base); set('jp_last', S.lastSync); saveOps();
@@ -1116,7 +1245,7 @@
 
   // ------------------------------------------------------------------ start
   window.JP = { S: S, sync: sync };               // for testing
-  upgradeLocal();
+  upgradeLocal(); upgradeBudget();
   rebuild(); render();
   takeShared();
   if (S.mode === 'sheet' || S.ops.length) sync();
