@@ -1,0 +1,56 @@
+# Japan Planner - publishes the live app (main branch) and the preview (preview branch) together.
+# Live app:    https://<your-name>.github.io/japan-planner/
+# Preview app: https://<your-name>.github.io/japan-planner/preview/
+name: Publish app and preview
+
+on:
+  push:
+    branches: [main, preview]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the live app (main branch)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: site
+
+      - name: Get the preview app (preview branch, if there is one)
+        run: |
+          REPO="https://github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$REPO" preview > /dev/null; then
+            git clone --depth 1 --branch preview "$REPO" site/preview
+          else
+            echo "No preview branch yet - publishing the live app only."
+          fi
+
+      - name: Remove files the website does not need
+        run: rm -rf site/.git site/.github site/preview/.git site/preview/.github
+
+      - name: Package the website
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
