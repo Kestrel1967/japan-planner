@@ -304,12 +304,29 @@ function reconcile_() {
       var key = s.sheet + ':' + r.id, time = /^\d{1,2}:\d{2}$/.test(r.v[s.time] || '') ? pad_(r.v[s.time]) : '';
       var link = s.link ? r.v[s.link] || '' : '', fixed = typeof s.part === 'function' ? s.part(r.v) : s.part;
       want[key] = { Date: d, Time: time, Name: s.name(r.v) || '(no name)', Type: s.type, part: fixed || (time ? partOf_(time) : ''),
-        'Map link': isMap_(link) ? link : '', Website: link && !isMap_(link) ? link : '', Source: key, id: autoId_(s.sheet, r.id) };
+        'Map link': isMap_(link) ? link : '', Website: link && !isMap_(link) ? link : '', Source: key, id: autoId_(s.sheet, r.id), t: t, r: r, s: s };
       order.push(key);
     });
   });
-  var seen = {}, gone = [];
+  // an item picked from a list before 2.8 has no Source: it is the same thing as that list row, so it becomes its automatic item
+  var adopt = {};
   it.rows.forEach(function (r) {
+    if (r.v.Source || !r.v.Type || r.v.Type === 'Own') return;
+    Object.keys(want).some(function (key) {
+      var w = want[key];
+      if (adopt[key] || w.Type !== r.v.Type || w.Date !== r.v.Date || w.Name !== (r.v.Name || '')) return false;
+      adopt[key] = r; r.v.Source = key;
+      it.sh.getRange(r.r, col('Source') + 1).setValue(key);
+      var t = /^\d{1,2}:\d{2}$/.test(r.v.Time || '') ? pad_(r.v.Time) : '';
+      if (t && !w.Time && w.s.time && w.t.heads.indexOf(w.s.time) >= 0) {   // its hour moves to the list row, where hours live now
+        w.t.sh.getRange(w.r.r, w.t.heads.indexOf(w.s.time) + 1).setValue(t);
+        w.Time = t; if (!w.part) w.part = partOf_(t);
+      }
+      return true;
+    });
+  });
+  var seen = {}, gone = [];
+  it.rows.slice().sort(function (a, b) { return (adopt[b.v.Source] === b ? 1 : 0) - (adopt[a.v.Source] === a ? 1 : 0); }).forEach(function (r) {
     var key = r.v.Source;
     if (!key) return;                             // your own item: never touched
     var w = want[key];
@@ -329,9 +346,14 @@ function reconcile_() {
   sortItinerary_(it.sh);
   hotels_(ss);
 }
-function sortItinerary_(sh) {
-  var h = headers_(sh), lr = sh.getLastRow(), dc = h.indexOf('Date') + 1, tc = h.indexOf('Time') + 1;
-  if (lr > 2 && dc && tc) sh.getRange(2, 1, lr - 1, h.length).sort([{ column: dc, ascending: true }, { column: tc, ascending: true }]);
+function sortItinerary_(sh) {                  // by day, then hour; items without an hour at the end of their day
+  var lr = sh.getLastRow(), lc = sh.getLastColumn();
+  if (lr < 3) return;
+  var h = headers_(sh), dc = h.indexOf('Date'), tc = h.indexOf('Time'), rng = sh.getRange(2, 1, lr - 1, lc), vals = rng.getDisplayValues();
+  var key = function (r) { return (r[dc] || '9999') + ' ' + (r[tc] ? pad_(r[tc]) : '99'); };
+  var sorted = vals.map(function (r, i) { return { r: r, i: i }; }).sort(function (a, b) { var x = key(a.r), y = key(b.r); return x < y ? -1 : x > y ? 1 : a.i - b.i; });
+  if (sorted.every(function (x, i) { return x.i === i; })) return;        // already in order
+  rng.setValues(sorted.map(function (x) { return x.r.map(clean_); }));
 }
 function hotels_(ss) {
   var days = table_(ss.getSheetByName('Days')), hot = table_(ss.getSheetByName('Hotels'));
