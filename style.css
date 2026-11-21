@@ -75,9 +75,10 @@ button { cursor: pointer; }
 .thead { font-size: 12px; color: var(--mute); }
 
 /* sheets that slide over the page: forms, pickers, messages */
-#overlay { position: fixed; inset: 0; background: rgba(30,34,44,.45); overflow-y: auto; -webkit-overflow-scrolling: touch; z-index: 10; display: flex; flex-direction: column; justify-content: flex-end; }
-.sheetbox { background: var(--ground); border-radius: 22px 22px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; margin-top: 60px; }
-.sheetbox.form { min-height: calc(100% - 60px); }
+#overlay { position: fixed; inset: 0; background: rgba(30,34,44,.45); overflow-y: auto; -webkit-overflow-scrolling: touch; z-index: 10; display: flex; flex-direction: column; padding-top: 60px; }
+.sheetbox { flex: none; margin-top: auto; background: #FFFFFF; border-radius: 22px 22px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
+.sheetbox > * { flex: none; }
+.sheetbox.form { min-height: 100%; }
 .sheetbox h2 { margin: 0 0 4px; font-size: 22px; overflow-wrap: anywhere; } .sheetbox p { margin: 0; }
 .field { display: flex; flex-direction: column; gap: 5px; } .field label { font-size: 14px; font-weight: 600; color: var(--mute); }
 .field input, .field select, .field textarea, .field.inline select { width: 100%; min-height: 52px; border: 1px solid #C9C6BE; border-radius: 12px; background: #FFFFFF; padding: 10px 12px; font-size: 18px; -webkit-appearance: none; appearance: none; }
@@ -146,3 +147,47 @@ h3 { margin: 8px 0 0; font-size: 18px; }
 
 /* the preview copy of the app looks different, so it is never mistaken for the real one */
 .top.preview { background: repeating-linear-gradient(135deg, #BDD7EE 0 14px, #D6E6F5 14px 28px); }
+
+/* Route button beside the cities */
+.routebtn { flex: none; height: 36px; min-width: 64px; border: 1px solid var(--line); border-radius: 10px; background: #FFFFFF; padding: 0 10px; display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: #1F4E8C; }
+.routebtn svg { width: 20px; height: 20px; }
+
+/* new ideas */
+.card.fresh { border-color: #E0B100; box-shadow: 0 0 0 2px #FFE9A8; }
+.b-new { background: #FFE9A8; color: #6B5200; }
+.field .open[hidden], .field .note[hidden] { display: none; }
+
+/* Itinerary: every day as a block, its items in hour order */
+.iday { flex: none; background: #FFF6EC; border: 1px solid var(--line); border-radius: 18px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.iday.now { border-color: #E0B100; box-shadow: 0 0 0 2px #FFE9A8; }
+.ihead { border: 0; background: transparent; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 4px 6px; text-align: start; min-height: 44px; }
+.idate { display: flex; align-items: baseline; gap: 8px; flex: none; } .idate b { font-size: 18px; } .idate span { font-size: 12px; color: var(--mute); }
+.icity { font-size: 14px; font-weight: 600; color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ihotel { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--mute); padding: 0 6px; } .ihotel svg { width: 20px; height: 20px; }
+.inone { margin: 0; padding: 4px 6px 8px; font-size: 14px; color: var(--mute); }
+.iday .pitem { min-height: 48px; }
+.iday .pmain { gap: 8px; padding-left: 8px; }
+.pico svg { width: 22px; height: 22px; }
+.ptime.soft { font-weight: 600; font-size: 12px; color: var(--mute); width: 42px; }
+.iday .ptime { width: 46px; } .iday .pname { font-size: 16px; }
+.rowl { display: flex; gap: 8px; }
+
+/* + button: always just above the bottom bar, over More */
+.fabdock { flex: none; position: relative; height: 0; }
+.fabdock .fab { position: absolute; right: 12px; bottom: 14px; }
+
+/* Days: Add expense / Spent today / Notes */
+.chip.sm.addexp { flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px; background: #D5E8C8; border-color: #A9CF94; color: #27500A; font-size: 14px; font-weight: 700; }
+.chip.sm.addexp svg { width: 20px; height: 20px; }
+.rowx.notes .chip.sm { height: 62px; min-height: 62px; }
+.rowx.notes .cval { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Expenses */
+.seg { display: flex; gap: 6px; }
+.segb { flex: 1; min-height: 40px; border: 1px solid var(--line); border-radius: 12px; background: #FFFFFF; font-size: 14px; font-weight: 600; color: var(--mute); }
+.segb.on { background: var(--ink); border-color: var(--ink); color: #FFFFFF; }
+.flab { align-self: center; font-size: 14px; color: var(--mute); }
+.expsum { background: #EAF3DE; border-radius: 14px; padding: 10px 14px; display: flex; flex-direction: column; }
+.expsum .l { font-size: 13px; color: #3B6D11; } .expsum b { font-size: 19px; color: #173404; overflow-wrap: anywhere; }
+.pricerow { display: flex; gap: 8px; } .pricerow input { flex: 1; min-width: 0; } .pricerow select { flex: none; width: 112px; }
+.locrow { display: flex; gap: 8px; } .locrow > .field { flex: 1; min-width: 0; }
