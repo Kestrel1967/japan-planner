@@ -143,3 +143,6 @@ h3 { margin: 8px 0 0; font-size: 18px; }
 .bmore { font-size: 12px; font-weight: 600; color: var(--mute); }
 .withico { display: flex; align-items: center; gap: 8px; } .withico svg { width: 26px; height: 26px; }
 .sheetbox.tinted .pitem { border: 1px solid var(--line); }
+
+/* the preview copy of the app looks different, so it is never mistaken for the real one */
+.top.preview { background: repeating-linear-gradient(135deg, #BDD7EE 0 14px, #D6E6F5 14px 28px); }

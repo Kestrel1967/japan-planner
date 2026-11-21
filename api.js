@@ -4,12 +4,17 @@
 (function (root) {
   'use strict';
   var A = root.Api = {};
-  function get(k) { try { return root.localStorage.getItem(k) || ''; } catch (e) { return ''; } }
-  function set(k, v) { try { if (v) root.localStorage.setItem(k, v); else root.localStorage.removeItem(k); } catch (e) { /* storage blocked */ } }
+  // the preview copy of the app (…/preview/) keeps its own data on the phone and talks to the test sheet
+  var PREVIEW = /\/preview\//.test(root.location.pathname);
+  root.JP_PREVIEW = PREVIEW;
+  function key_(k) { return PREVIEW ? k.replace(/^jp_/, 'jpv_') : k; }
+  function get(k) { try { return root.localStorage.getItem(key_(k)) || ''; } catch (e) { return ''; } }
+  function set(k, v) { try { if (v) root.localStorage.setItem(key_(k), v); else root.localStorage.removeItem(key_(k)); } catch (e) { /* storage blocked */ } }
+  function fixed() { var c = root.CONFIG || {}; return ((PREVIEW ? c.PREVIEW_API_URL : c.API_URL) || '').trim(); }
   function err(msg, code) { var e = new Error(msg); e.friendly = true; e.code = code || ''; return e; }
 
-  A.url = function () { return ((root.CONFIG && root.CONFIG.API_URL) || get('jp_url')).trim(); };
-  A.urlFixed = function () { return !!(root.CONFIG && root.CONFIG.API_URL); };
+  A.url = function () { return (fixed() || get('jp_url')).trim(); };
+  A.urlFixed = function () { return !!fixed(); };
   A.key = function () { return get('jp_key'); };
   A.save = function (url, key) { if (!A.urlFixed()) set('jp_url', (url || '').trim()); set('jp_key', (key || '').trim()); };
   A.forget = function () { set('jp_url', ''); set('jp_key', ''); };

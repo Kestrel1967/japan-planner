@@ -5,11 +5,12 @@
   'use strict';
   var SC = window.SCHEMA, TABS = SC.tabs, LS = window.localStorage;
   var app = document.getElementById('app'), overlay = document.getElementById('overlay'), toastEl = document.getElementById('toast');
-  var VERSION = '2.4';
+  var VERSION = '2.5';
 
   // ------------------------------------------------------------------ storage
-  function get(k, d) { try { var v = LS.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }
-  function set(k, v) { try { if (v == null) LS.removeItem(k); else LS.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
+  function sk(k) { return window.JP_PREVIEW ? k.replace(/^jp_/, 'jpv_') : k; }   // preview keeps its own data
+  function get(k, d) { try { var v = LS.getItem(sk(k)); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }
+  function set(k, v) { try { if (v == null) LS.removeItem(sk(k)); else LS.setItem(sk(k), JSON.stringify(v)); return true; } catch (e) { return false; } }
 
   var S = {
     mode: get('jp_mode', ''),                     // '' = not set up, 'sheet' = the shared Google Sheet, 'local' = practice on this phone only
@@ -196,7 +197,7 @@
       return h('button', { type: 'button', class: 'tab' + (S.view === 'main' && S.tab === id ? ' on' : ''), 'data-id': id, onclick: function () { go(id); } }, [icon(id), h('span', { text: t.label })]);
     }));
     return [
-      h('header', { class: 'top' }, [h('h1', { text: title }), h('button', { type: 'button', id: 'pill', class: 'pill', onclick: pillTap })]),
+      h('header', { class: 'top' + (window.JP_PREVIEW ? ' preview' : '') }, [h('h1', { text: (window.JP_PREVIEW ? 'PREVIEW · ' : '') + title }), h('button', { type: 'button', id: 'pill', class: 'pill', onclick: pillTap })]),
       h('main', { class: 'main' }, body),
       fab || null,
       h('nav', { class: 'bar', 'aria-label': 'Sections' }, [bar,
@@ -672,7 +673,8 @@
   // ------------------------------------------------------------------ first-time setup
   function setupView() {
     return [h('div', { class: 'setup' }, [
-      h('h1', { text: 'Japan Planner' }),
+      h('h1', { text: window.JP_PREVIEW ? 'Japan Planner PREVIEW' : 'Japan Planner' }),
+      window.JP_PREVIEW ? h('p', { class: 'note warn', text: 'This is the test version. It uses the TEST copy of the sheet, never the real trip data.' }) : null,
       h('p', { text: 'Fill and view the trip plan from your phone.' }),
       btn('Connect to our trip sheet', 'primary block big', function () { askKey(true); }),
       h('p', { class: 'note', text: 'Type the passcode once. After that everything you save goes to the shared Google Sheet, and you see what the other phone saved.' }),
