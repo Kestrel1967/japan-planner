@@ -75,9 +75,10 @@ button { cursor: pointer; }
 .thead { font-size: 12px; color: var(--mute); }
 
 /* sheets that slide over the page: forms, pickers, messages */
-#overlay { position: fixed; inset: 0; background: rgba(30,34,44,.45); overflow-y: auto; -webkit-overflow-scrolling: touch; z-index: 10; display: flex; flex-direction: column; justify-content: flex-end; }
-.sheetbox { background: var(--ground); border-radius: 22px 22px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; margin-top: 60px; }
-.sheetbox.form { min-height: calc(100% - 60px); }
+#overlay { position: fixed; inset: 0; background: rgba(30,34,44,.45); overflow-y: auto; -webkit-overflow-scrolling: touch; z-index: 10; display: flex; flex-direction: column; padding-top: 60px; }
+.sheetbox { flex: none; margin-top: auto; background: #FFFFFF; border-radius: 22px 22px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
+.sheetbox > * { flex: none; }
+.sheetbox.form { min-height: 100%; }
 .sheetbox h2 { margin: 0 0 4px; font-size: 22px; overflow-wrap: anywhere; } .sheetbox p { margin: 0; }
 .field { display: flex; flex-direction: column; gap: 5px; } .field label { font-size: 14px; font-weight: 600; color: var(--mute); }
 .field input, .field select, .field textarea, .field.inline select { width: 100%; min-height: 52px; border: 1px solid #C9C6BE; border-radius: 12px; background: #FFFFFF; padding: 10px 12px; font-size: 18px; -webkit-appearance: none; appearance: none; }
@@ -150,3 +151,8 @@ h3 { margin: 8px 0 0; font-size: 18px; }
 /* Route button beside the cities */
 .routebtn { flex: none; height: 36px; min-width: 64px; border: 1px solid var(--line); border-radius: 10px; background: #FFFFFF; padding: 0 10px; display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: #1F4E8C; }
 .routebtn svg { width: 20px; height: 20px; }
+
+/* new ideas */
+.card.fresh { border-color: #E0B100; box-shadow: 0 0 0 2px #FFE9A8; }
+.b-new { background: #FFE9A8; color: #6B5200; }
+.field .open[hidden], .field .note[hidden] { display: none; }

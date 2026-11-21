@@ -5,7 +5,7 @@
   'use strict';
   var SC = window.SCHEMA, TABS = SC.tabs, LS = window.localStorage;
   var app = document.getElementById('app'), overlay = document.getElementById('overlay'), toastEl = document.getElementById('toast');
-  var VERSION = '2.6';
+  var VERSION = '2.7';
 
   // ------------------------------------------------------------------ storage
   function sk(k) { return window.JP_PREVIEW ? k.replace(/^jp_/, 'jpv_') : k; }   // preview keeps its own data
@@ -18,7 +18,7 @@
     ops: get('jp_ops', []),                       // changes waiting to be sent
     tabs4: get('jp_tabs', ['days', 'places', 'food', 'money']),
     tab: get('jp_tab', ''), day: get('jp_day', -1), filters: {},
-    view: 'main', sync: 'idle', syncMsg: '', lastSync: get('jp_last', 0), data: null
+    view: 'main', sync: 'idle', syncMsg: '', lastSync: get('jp_last', 0), data: null, fresh: {}
   };
   if (!byId(S.tab)) S.tab = S.tabs4[0];
   function byId(id) { for (var i = 0; i < TABS.length; i++) if (TABS[i].id === id) return TABS[i]; return null; }
@@ -57,9 +57,12 @@
   function saveOps() { if (!set('jp_ops', S.ops)) toast('Phone storage is full - sync soon'); rebuild(); }
   // rec = the record being changed, or null for a new one
   function change(sheet, rec, vals, del) {
-    S.ops.push({ id: uid(), sheet: sheet, rid: rec ? rec.id : uid(), isNew: !rec, v: vals || {}, del: !!del });
+    var rid = rec ? rec.id : uid();
+    S.ops.push({ id: uid(), sheet: sheet, rid: rid, isNew: !rec, v: vals || {}, del: !!del });
+    if (sheet === 'Ideas' && !rec) markSeen([rid]);   // made on this phone: never announced as "new" later
     saveOps(); render();
     if (S.mode === 'local') sync(); else syncSoon();
+    return rid;
   }
 
   // ------------------------------------------------------------------ sync
@@ -85,6 +88,7 @@
       S.base = normalize(res.data); S.lastSync = Date.now();
       set('jp_data', S.base); set('jp_last', S.lastSync); saveOps();
       setSync('idle'); render();
+      checkIdeas();
       if (res.skipped) toast(res.skipped + ' change' + (res.skipped > 1 ? 's were' : ' was') + ' skipped: the item was deleted meanwhile');
       else if (manualTap) toast('Up to date');
       if (S.ops.length) syncSoon();
@@ -239,7 +243,7 @@
     var prev = S.day > 0 ? list[S.day - 1].v : {}, startGuess = v['Starts in'] || prev['Ends in'] || prev['Starts in'] || '';
     var cityPreset = { 'Starts in': startGuess, 'Ends in': v['Ends in'] || startGuess }, when = fmtDate(v.Date);
     function cityChip(label) {
-      return h('button', { type: 'button', class: 'citychip', onclick: function () { editFields('Itinerary', d, ['Starts in', 'Ends in'], when + ' · Cities', cityPreset); } },
+      return h('button', { type: 'button', class: 'citychip', onclick: function () { cityForm(list, S.day); } },
         [h('span', { class: 'clabel', text: label }), h('span', { class: 'cval' + (v[label] ? '' : ' none'), dir: 'auto', text: v[label] || 'Not set' })]);
     }
     function small(label, val, fn, cls) {
@@ -313,10 +317,10 @@
   function routeUrl(list, idx) {
     var day = list[idx], v = day.v, prev = idx > 0 ? list[idx - 1].v : {};
     var cityStart = v['Starts in'] || prev['Ends in'] || '', cityEnd = v['Ends in'] || cityStart;
-    var hotelPrev = idx > 0 ? planItems(prev.Date, 'Hotel')[0] : null, hotel = planItems(v.Date, 'Hotel')[0];
+    var sh = startHotel(list, idx), hotel = endHotel(v.Date);
     var oneCity = cityStart && cityStart === cityEnd ? cityStart : '';   // on a travel day the stops may be in either city: names only
     var stops = dayStops(v.Date).map(function (r) { return stopText(r, oneCity); }).filter(Boolean);
-    var origin = hotelPrev ? stopText(hotelPrev, prev['Ends in'] || cityStart) : '', dest = hotel ? stopText(hotel, cityEnd) : '';   // last night's hotel is in the city where yesterday ended
+    var origin = sh ? stopText(sh.item, sh.auto ? (prev['Ends in'] || cityStart) : cityStart) : '', dest = hotel ? stopText(hotel, cityEnd) : '';   // last night's hotel is in the city where yesterday ended
     if (!stops.length && !dest) return { error: 'Nothing to route on this day yet. Add places to Morning, Afternoon, Evening or Food, or a hotel to Sleeping at.' };
     if (!dest) dest = stops.pop();                // no hotel tonight: the route ends at the last stop
     var dropped = Math.max(0, stops.length - MAX_STOPS);
@@ -369,7 +373,7 @@
   }
   // what one row of another section offers to a day item
   function offer(t, r) {
-    var v = r.v, o = { name: t.title.map(function (x) { return v[x] || ''; }).filter(Boolean).join(t.sep || ' '), map: cleanUrl(v['Map link'] || v['Map / booking link'] || ''), web: cleanUrl(v['Where to book (link)'] || ''), time: v.Departs || v.Time || '' };
+    var v = r.v, o = { name: t.title.map(function (x) { return v[x] || ''; }).filter(Boolean).join(t.sep || ' '), map: cleanUrl(v['Map link'] || v['Map / booking link'] || ''), web: cleanUrl(v['Booking link'] || v['Where to book (link)'] || ''), time: v.Departs || v.Time || '' };
     if (t.id === 'ideas' && v.Link) { if (isMap(v.Link)) o.map = cleanUrl(v.Link); else o.web = cleanUrl(v.Link); }
     if (o.map && !isMap(o.map) && !o.web) { o.web = o.map; o.map = ''; }
     o.hint = [v.City, v['District / ward'], v.Type || v.Category].filter(Boolean).join(', ');
@@ -411,17 +415,7 @@
       if (!now.Name) { toast('Give it a name, or pick one from the list'); return; }
       Object.keys(now).forEach(function (k) { if (now[k] !== (v[k] || '')) out[k] = now[k]; });
       if (picked) out.From = picked.t.label;
-      var filled = 0;
-      if (p.single) {                             // a hotel holds for the following days too, until a day that has another one
-        var all = days(), at = -1, oldName = v.Name || '';
-        all.forEach(function (x, i) { if (x.v.Date === date) at = i; });
-        for (var i = at + 1; at >= 0 && i < all.length; i++) {
-          var it = planItems(all[i].v.Date, p.id)[0], same = { 'Name': now.Name, 'Map link': now['Map link'], 'Website': now.Website };
-          if (!it) { same.Date = all[i].v.Date; same.Part = p.id; Object.keys(same).forEach(function (k) { if (same[k] === '') delete same[k]; }); change('Day plan', null, same); filled++; }
-          else if (oldName && (it.v.Name || '') === oldName) { change('Day plan', it, same); filled++; }
-          else break;
-        }
-      }
+      var filled = p.single ? carryHotel(date, v.Name || '', now) : 0;
       if (!rec) { out.Date = date; out.Part = p.id; Object.keys(out).forEach(function (k) { if (out[k] === '') delete out[k]; }); change('Day plan', null, out); }
       else if (Object.keys(out).length) change('Day plan', rec, out);
       // a place or restaurant put on a day gets that day as its "Planned day"
@@ -430,6 +424,82 @@
     }));
     nodes.push(btn('Cancel', 'block', done));
     if (rec) nodes.push(btn('Remove from this day', 'danger block', function () { change('Day plan', rec, null, true); done(); toast('Removed'); }));
+    openSheet(nodes, 'form');
+  }
+  // ------------------------------------------------------------------ hotels of a day
+  // End hotel = "Sleeping at" (Day plan part "Hotel"). Start hotel = chosen for the day (part "Start hotel"), else last night's hotel.
+  function hotelRows() { return (S.data.sheets.Hotels || []).filter(function (r) { return r.v['Hotel name']; }); }
+  function hotelRow(name) { return hotelRows().filter(function (r) { return r.v['Hotel name'] === name; })[0] || null; }
+  function hotelMap(name, item) {                 // the Map link of that hotel in the Hotels tab
+    var r = hotelRow(name), m = r ? (r.v['Map link'] || (isMap(r.v['Map / booking link']) ? r.v['Map / booking link'] : '')) : '';
+    return cleanUrl(m || (item && item.v['Map link']) || '');
+  }
+  function endHotel(date) { return planItems(date, 'Hotel')[0] || null; }
+  function startHotel(list, idx) {
+    var own = planItems(list[idx].v.Date, 'Start hotel')[0];
+    if (own) return { item: own, name: own.v.Name || '', auto: false };
+    var prev = idx > 0 ? endHotel(list[idx - 1].v.Date) : null;
+    return prev ? { item: prev, name: prev.v.Name || '', auto: true } : null;
+  }
+  // a hotel holds for the following days too, until a day that has another one
+  function carryHotel(date, oldName, now) {
+    var all = days(), at = -1, filled = 0;
+    all.forEach(function (x, i) { if (x.v.Date === date) at = i; });
+    for (var i = at + 1; at >= 0 && i < all.length; i++) {
+      var it = endHotel(all[i].v.Date), same = { 'Name': now.Name, 'Map link': now['Map link'] || '', 'Website': now.Website || '' };
+      if (!it) { same.Date = all[i].v.Date; same.Part = 'Hotel'; Object.keys(same).forEach(function (k) { if (same[k] === '') delete same[k]; }); change('Day plan', null, same); filled++; }
+      else if (oldName && (it.v.Name || '') === oldName) { change('Day plan', it, same); filled++; }
+      else break;
+    }
+    return filled;
+  }
+  // Starts in / Start hotel / Ends in / End hotel, each hotel with its Google Maps link
+  function cityForm(list, idx) {
+    var d = list[idx], v = d.v, date = v.Date, prev = idx > 0 ? list[idx - 1].v : {};
+    var startGuess = v['Starts in'] || prev['Ends in'] || prev['Starts in'] || '';
+    var fStart = field('Itinerary', col('Itinerary', 'Starts in'), v['Starts in'] || startGuess);
+    var fEnd = field('Itinerary', col('Itinerary', 'Ends in'), v['Ends in'] || v['Starts in'] || startGuess);
+    var sh = startHotel(list, idx), eh = endHotel(date), autoName = idx > 0 && endHotel(prev.Date) ? endHotel(prev.Date).v.Name || '' : '';
+    var names = hotelRows().map(function (r) { return r.v['Hotel name']; });
+    [sh && sh.name, eh && eh.v.Name].forEach(function (n) { if (n && names.indexOf(n) < 0) names.push(n); });
+    function hotelField(id, label, cur, item) {
+      var sel = h('select', { id: id }, [h('option', { value: '', text: '— not set —' })].concat(names.map(function (n) { return h('option', { value: n, text: n }); })));
+      sel.value = cur || '';
+      var a = h('a', { class: 'open', target: '_blank', rel: 'noopener', text: 'Open in Google Maps' }), none = h('span', { class: 'note', text: 'This hotel has no Map link in the Hotels tab.' });
+      function upd() { var m = sel.value ? hotelMap(sel.value, sel.value === cur ? item : null) : ''; a.hidden = !m; none.hidden = !sel.value || !!m; if (m) a.href = m; }
+      sel.addEventListener('change', guard(upd)); upd();
+      return { el: h('div', { class: 'field' }, [h('label', { for: id, text: label }), sel, a, none]), sel: sel };
+    }
+    var fSH = hotelField('starthotel', 'Start hotel' + (sh && sh.auto ? ' (last night\'s)' : ''), sh ? sh.name : '', sh && sh.item);
+    var fEH = hotelField('endhotel', 'End hotel (Sleeping at)', eh ? eh.v.Name : '', eh);
+    function val(f) { var el = f.querySelector('[data-h]'); return el && el.value !== '\u0001new' ? el.value.trim() : ''; }
+    var nodes = [h('h2', { text: fmtDate(date) + ' · Start and end' }), fStart, fSH.el, fEnd, fEH.el];
+    if (!hotelRows().length) nodes.push(h('p', { class: 'note warn', text: 'The hotel lists come from the Hotels tab. Add your hotels there first.' }));
+    nodes.push(btn('Save', 'primary block', function () {
+      var out = {}, st = val(fStart), en = val(fEnd) || st, filled = 0;
+      if (st !== (v['Starts in'] || '')) out['Starts in'] = st;
+      if (en !== (v['Ends in'] || '')) out['Ends in'] = en;
+      if (Object.keys(out).length) change('Itinerary', d, out);
+      var own = planItems(date, 'Start hotel')[0], s2 = fSH.sel.value;
+      if (!s2 || s2 === autoName) { if (own) change('Day plan', own, null, true); }       // same as last night's: nothing to store
+      else if (!own || own.v.Name !== s2) {
+        var sv = { 'Name': s2, 'Map link': hotelMap(s2) };
+        if (own) change('Day plan', own, sv);
+        else { sv.Date = date; sv.Part = 'Start hotel'; if (!sv['Map link']) delete sv['Map link']; change('Day plan', null, sv); }
+      }
+      var e2 = fEH.sel.value, old = eh ? eh.v.Name || '' : '';
+      if (e2 !== old) {
+        if (!e2) { if (eh) change('Day plan', eh, null, true); }
+        else {
+          var r = hotelRow(e2), now = { 'Name': e2, 'Map link': hotelMap(e2, eh), 'Website': r ? cleanUrl(r.v['Booking link'] || '') : '' };
+          filled = carryHotel(date, old, now);
+          if (eh) change('Day plan', eh, now);
+          else { var nv = { Date: date, Part: 'Hotel' }; Object.keys(now).forEach(function (k) { if (now[k]) nv[k] = now[k]; }); change('Day plan', null, nv); }
+        }
+      }
+      closeSheet(); toast(filled ? 'Saved; the hotel also fills the ' + filled + ' day(s) after it' : 'Saved');
+    }));
+    nodes.push(btn('Cancel', 'block', closeSheet));
     openSheet(nodes, 'form');
   }
   function pickDay(list) {
@@ -477,8 +547,9 @@
     if (t.amount) { var amt = v[t.amount[0]] || v[t.amount[1]]; if (amt) right.push(h('span', { class: 'amt', text: fmtNum(amt) + ' ' + (v[t.amount[2]] || '') })); }
     if (t.badge && v[t.badge]) right.push(h('span', { class: 'badge b-' + v[t.badge].toLowerCase().replace(/[^a-z]+/g, '-'), text: v[t.badge] }));
     if (r.wait) right.push(h('span', { class: 'waitdot', title: 'Waiting to be saved', text: '●' }));
+    if (S.fresh[r.id]) right.unshift(h('span', { class: 'badge b-new', text: 'New' }));
     if (right.length) kids.push(h('div', { class: 'cright' }, right));
-    return h('div', { class: 'card' + (done ? ' done' : '') }, kids);
+    return h('div', { class: 'card' + (done ? ' done' : '') + (S.fresh[r.id] ? ' fresh' : '') }, kids);
   }
   function fmtNum(x) { var n = parseFloat(x); return isNaN(n) ? x : n.toLocaleString('en-US', { maximumFractionDigits: 2 }); }
   function totals(rows) {
@@ -549,6 +620,8 @@
     nodes.push(btn('Save', 'primary block', function () {
       var c = collect();
       if (!rec && !c.any) { toast('Fill at least one field'); return; }
+      if (sheet === 'Ideas' && !('Idea' in c.out ? c.out.Idea : v.Idea || '')) { toast('Give the idea a name first'); return; }
+      if (sheet === 'Apps') sortAppLinks(v, c.out);
       if (sheet === 'Itinerary') {                  // a day with only a start city ends in the same city
         var st = 'Starts in' in c.out ? c.out['Starts in'] : v['Starts in'] || '', en = 'Ends in' in c.out ? c.out['Ends in'] : v['Ends in'] || '';
         if (st && !en) c.out['Ends in'] = st;
@@ -573,16 +646,79 @@
     var all = [title, text, url].filter(Boolean).join('\n'), m = /https?:\/\/\S+/.exec(url || '') || /https?:\/\/\S+/.exec(all), link = m ? cleanUrl(m[0]) : '';
     var idea = all.replace(/https?:\/\/\S+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
     if (title && text && idea.indexOf(title + ' ' + title) === 0) idea = idea.slice(title.length + 1);
-    if (!idea && link) idea = '(' + host(link) + ')';
+    idea = cleanName(idea);
     return idea || link ? { idea: idea, link: link } : null;
+  }
+  // words that apps put around a shared name ("בדוק את …", "Check out …", "… on Google Play"), and the old "(instagram.com)" placeholder
+  function cleanName(s) {
+    s = String(s || '').replace(/\s+/g, ' ').trim();
+    if (/^\([^()]*\)$/.test(s)) return '';
+    s = s.replace(/^(check (this )?out|look at|בדוק את|בדקי את|בדקו את|תבדוק את|תבדקי את|כדאי לבדוק את)\s*[:\-–]?\s*/i, '');
+    s = s.replace(/\s*(on|in|at) (the )?(Google Play|App Store)( Store)?\s*[!.]?$/i, '').replace(/\s*ב-?\s?(Google Play|App Store)\s*[!.]?$/, '');
+    return s.replace(/^["'“”„׳״]+|["'“”„׳״]+$/g, '').trim();
+  }
+  // which Apps column a link belongs in
+  function appLinkCol(u) {
+    var hst = host(u).toLowerCase();
+    if (/(^|\.)play\.google\.com$/.test(hst)) return 'Android download';
+    if (/(^|\.)(apps|itunes)\.apple\.com$/.test(hst)) return 'iPhone download';
+    return 'Other link';
+  }
+  function sortAppLinks(v, out) {                 // put every link of an app into the column its address belongs to
+    var cols = ['iPhone download', 'Android download', 'Other link'], now = {}, put = {};
+    cols.forEach(function (k) { now[k] = k in out ? out[k] : v[k] || ''; put[k] = ''; });
+    cols.forEach(function (k) { var u = now[k]; if (!u) return; var to = appLinkCol(u); if (put[to]) to = put['Other link'] ? null : 'Other link'; if (to) put[to] = u; });
+    cols.forEach(function (k) { if (put[k] !== (v[k] || '')) out[k] = put[k]; else delete out[k]; });
+  }
+  function linkColFor(sheet, u) {
+    if (sheet === 'Apps') return appLinkCol(u);
+    if (sheet === 'Hotels') return isMap(u) ? 'Map link' : 'Booking link';
+    var c = def(sheet).cols.filter(function (x) { return x.k === 'link'; })[0];
+    return c ? c.h : null;
+  }
+  // new ideas that reached the sheet from elsewhere (the iPhone shortcut): open Ideas, mark them, ask for a missing name
+  function markSeen(ids) { var s = get('jp_seenIdeas', []) || []; set('jp_seenIdeas', s.concat(ids).slice(-3000)); }
+  function checkIdeas() {
+    if (S.mode !== 'sheet' || !S.data) return;
+    var rows = S.data.sheets.Ideas || [], seen = get('jp_seenIdeas', null), who = get('jp_who', '');
+    rows.forEach(function (r) {                   // tidy names and links saved before these rules existed
+      var o = {}, nm = cleanName(r.v.Idea), ln = cleanUrl(r.v.Link);
+      if (nm !== (r.v.Idea || '')) o.Idea = nm;
+      if (ln !== (r.v.Link || '')) o.Link = ln;
+      if (Object.keys(o).length) change('Ideas', r, o);
+    });
+    if (!seen) { markSeen(rows.map(function (r) { return r.id; })); return; }   // first time on this phone: nothing is "new"
+    var have = {}; seen.forEach(function (id) { have[id] = 1; });
+    var fresh = rows.filter(function (r) { return !have[r.id]; });
+    if (!fresh.length) return;
+    markSeen(fresh.map(function (r) { return r.id; }));
+    var mine = fresh.filter(function (r) { return (r.v['Added by'] || '') === who; });   // the other phone's ideas are not announced
+    if (!mine.length) return;
+    mine.forEach(function (r) { S.fresh[r.id] = 1; });
+    if (!overlay.hidden) { toast(mine.length + ' new idea' + (mine.length > 1 ? 's' : '') + ' in Ideas'); return; }
+    S.tab = 'ideas'; S.view = 'main'; set('jp_tab', 'ideas'); render();
+    var unnamed = mine.filter(function (r) { return !cleanName(r.v.Idea); })[0];
+    if (unnamed) nameForm(unnamed.v.Link || '', function (name) { change('Ideas', unnamed, { Idea: name }); toast('Saved'); });
+    else toast(mine.length > 1 ? mine.length + ' new ideas saved' : 'Saved to Ideas: ' + mine[0].v.Idea);
+  }
+  // the name is required before the idea is saved
+  function nameForm(link, onSave, onCancel) {
+    var inp = h('input', { type: 'text', id: 'ideaname', dir: 'auto', autocomplete: 'off', placeholder: 'For example: Ramen place in Shibuya' });
+    var nodes = [h('h2', { text: 'Name this idea' })];
+    if (link) nodes.push(h('div', { class: 'field' }, [h('label', { text: 'Link' }), h('a', { class: 'open', href: link, target: '_blank', rel: 'noopener', text: host(link) + ' (open)' })]));
+    nodes.push(h('div', { class: 'field' }, [h('label', { for: 'ideaname', text: 'Name' }), inp]));
+    nodes.push(btn('Save', 'primary block', function () { var n = cleanName(inp.value); if (!n) { toast('Type a name first'); inp.focus(); return; } closeSheet(); onSave(n); }));
+    nodes.push(btn('Cancel', 'block', function () { closeSheet(); if (onCancel) onCancel(); }));
+    openSheet(nodes, 'form'); inp.focus();
   }
   function today() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
   function addIdea(x) {
+    if (!x.idea) { nameForm(x.link, function (n) { addIdea({ idea: n, link: x.link }); }); return; }   // no name: ask first, save after
     var v = { 'Idea': x.idea, 'Added': today() };
     if (x.link) v.Link = x.link;
     if (get('jp_who', '')) v['Added by'] = get('jp_who', '');
     S.tab = 'ideas'; S.view = 'main'; set('jp_tab', 'ideas');
-    change('Ideas', null, v); toast('Added to Ideas');
+    var rid = change('Ideas', null, v); S.fresh[rid] = 1; render(); toast('Added to Ideas');
   }
   function pasteIdea() {
     function manual() {                           // the phone did not hand over the clipboard: paste by hand
@@ -596,7 +732,7 @@
     return navigator.clipboard.readText().then(function (t) { var x = parseShare('', t, ''); if (x) addIdea(x); else manual(); }, manual);
   }
   function moveIdea(rec) {
-    var v = rec.v, name = v.Idea || '', guess = /hotel|ryokan|hostel|guest ?house|מלון/i.test(name) ? 'hotels'
+    var v = rec.v, name = cleanName(v.Idea), guess = /hotel|ryokan|hostel|guest ?house|מלון/i.test(name) ? 'hotels'
       : /ramen|sushi|caf[eé]|coffee|restaurant|izakaya|bakery|yakitori|udon|soba|tempura|burger|pizza|bar\b|מסעד|קפה/i.test(name) ? 'food' : '';
     function toDay() {                            // an idea goes onto a day: pick the day, then the box
       var list = days();
@@ -605,7 +741,7 @@
         return h('button', { type: 'button', class: 'daybtn', onclick: function () {
           openSheet([h('h2', { text: fmtDate(d.v.Date) + ' · which part?' }), h('p', { dir: 'auto', text: name })].concat(PARTS.map(function (part) {
             return btn([icon(part.icon), part.label], 'block row', function () {
-              var o = { Date: d.v.Date, Part: part.id, Name: /^\(.*\)$/.test(name) ? (v.Link ? host(v.Link) : 'Idea') : name, From: 'Ideas' };
+              var o = { Date: d.v.Date, Part: part.id, Name: name || (v.Link ? host(v.Link) : 'Idea'), From: 'Ideas' };
               if (v.Link) o[isMap(v.Link) ? 'Map link' : 'Website'] = v.Link;
               if (v.Notes) o.Notes = v.Notes;
               closeSheet(); change('Day plan', null, o); change('Ideas', rec, null, true); toast('Added to ' + fmtDate(d.v.Date));
@@ -615,10 +751,9 @@
       })), btn('Cancel', 'block', closeSheet)]);
     }
     function toTab(t) {
-      var d = def(t.sheet), preset = {}, linkCol = null, notes = v.Notes || '';
-      d.cols.forEach(function (c) { if (!linkCol && c.k === 'link') linkCol = c.h; });
-      preset[t.title[0]] = /^\(.*\)$/.test(name) ? '' : name;
-      if (v.Link) { if (linkCol) preset[linkCol] = cleanUrl(v.Link); else notes = (notes ? notes + '\n' : '') + cleanUrl(v.Link); }
+      var preset = {}, notes = v.Notes || '', link = cleanUrl(v.Link), linkCol = link ? linkColFor(t.sheet, link) : null;
+      preset[t.title[0]] = name;
+      if (link) { if (linkCol) preset[linkCol] = link; else notes = (notes ? notes + '\n' : '') + link; }
       if (notes && col(t.sheet, 'Notes')) preset.Notes = notes;
       editFields(t.sheet, null, null, 'Add to ' + t.label, preset, function () { change('Ideas', rec, null, true); toast('Moved to ' + t.label); });
     }
