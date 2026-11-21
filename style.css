@@ -146,3 +146,7 @@ h3 { margin: 8px 0 0; font-size: 18px; }
 
 /* the preview copy of the app looks different, so it is never mistaken for the real one */
 .top.preview { background: repeating-linear-gradient(135deg, #BDD7EE 0 14px, #D6E6F5 14px 28px); }
+
+/* Route button beside the cities */
+.routebtn { flex: none; height: 36px; min-width: 64px; border: 1px solid var(--line); border-radius: 10px; background: #FFFFFF; padding: 0 10px; display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: #1F4E8C; }
+.routebtn svg { width: 20px; height: 20px; }

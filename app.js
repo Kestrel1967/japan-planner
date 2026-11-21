@@ -5,7 +5,7 @@
   'use strict';
   var SC = window.SCHEMA, TABS = SC.tabs, LS = window.localStorage;
   var app = document.getElementById('app'), overlay = document.getElementById('overlay'), toastEl = document.getElementById('toast');
-  var VERSION = '2.5';
+  var VERSION = '2.6';
 
   // ------------------------------------------------------------------ storage
   function sk(k) { return window.JP_PREVIEW ? k.replace(/^jp_/, 'jpv_') : k; }   // preview keeps its own data
@@ -162,6 +162,7 @@
     phrases: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
     emergency: '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/>',
     ideas: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/>',
+    route: '<circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="5" r="2.2"/><path d="M8.2 19H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.8"/>',
     more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
     left: '<path d="M15 5l-7 7 7 7"/>', right: '<path d="M9 5l7 7-7 7"/>', plus: '<path d="M12 5v14M5 12h14"/>',
     sun: '<path d="M2 20h20M4 20a5 5 0 0 1 10 0M9 12.5v-2M4.6 15.2L3.2 13.8M13.4 15.2l1.4-1.4M19 16.5V5M16 8l3-3 3 3"/>',
@@ -257,7 +258,8 @@
           h('span', { class: 'dline' }, [h('span', { class: 'big', text: when }), h('span', { class: 'small', text: 'Day ' + (v.Day || S.day + 1) + ' of ' + list.length })]),
           h('span', { class: 'track' }, [h('span', { style: 'width:' + Math.max(4, Math.round((S.day + 1) / list.length * 100)) + '%' })])]),
         h('button', { type: 'button', class: 'round', 'aria-label': 'Next day', disabled: S.day === list.length - 1, onclick: function () { move(1); } }, [icon('right')])]),
-      h('div', { class: 'rowx' }, [cityChip('Starts in'), cityChip('Ends in')]),
+      h('div', { class: 'rowx' }, [cityChip('Starts in'), cityChip('Ends in'),
+        h('button', { type: 'button', class: 'routebtn', 'aria-label': 'Route of this day in Google Maps', onclick: function () { openRoute(list, S.day); } }, [icon('route'), h('span', { text: 'Route' })])]),
       h('div', { class: 'blocks' }, ['Morning', 'Afternoon', 'Evening', 'Food'].map(function (id) { return bigPart(d, part(id)); })),
       h('div', { class: 'rowx' }, [smallPart(d, part('Hotel'), small), smallPart(d, part('Transport'), small)]),
       h('div', { class: 'rowx' }, [smallPart(d, part('Bookings'), small), small('Day type', v['Day type'], field1('Day type', ['Day type']))]),
@@ -282,6 +284,55 @@
       .sort(function (a, b) { return (a.v.Time || '99') < (b.v.Time || '99') ? -1 : (a.v.Time || '99') > (b.v.Time || '99') ? 1 : 0; });
   }
   function isMap(u) { return /(^|\.)google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps|maps\.google\.|maps\.apple\./i.test(u || ''); }
+  // a link as shared from the iPhone shortcut can carry leftover text (?g_st=...): remove it
+  function cleanUrl(u) {
+    u = String(u || '').trim();
+    return u.replace(/([?&])g_st=[^&#]*(&?)/, function (m, sep, amp) { return amp ? sep : ''; }).replace(/[?&]$/, '');
+  }
+
+  // ------------------------------------------------------------------ the day's route in Google Maps
+  // stops = Morning, Afternoon, Evening and Food items in hour order; from last night's hotel to tonight's hotel
+  var ROUTE_PARTS = ['Morning', 'Afternoon', 'Evening', 'Food'], MAX_STOPS = 9;
+  function stopText(item, city) {                 // Maps finds a stop by its name; the day's city helps it pick the right one
+    var n = (item.v.Name || '').trim(), low = n.toLowerCase();
+    if (!n || !city) return n;
+    var named = (S.data.lists.L_Cities || []).concat([city]).some(function (c) { return c && low.indexOf(String(c).toLowerCase()) >= 0; });
+    return named ? n : n + ', ' + city;           // the name already says which city: leave it as it is
+  }
+  function dayStops(date) {
+    var items = [];
+    ROUTE_PARTS.forEach(function (part, pi) {
+      planItems(date, part).forEach(function (r, i) {
+        // no hour: Morning goes before noon, Afternoon and Evening after it, Food without an hour at the end
+        var t = r.v.Time || ['11:59', '17:59', '23:58', '23:59'][pi];
+        items.push({ r: r, key: t + '|' + pi + '|' + ('00' + i).slice(-3) });
+      });
+    });
+    return items.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; }).map(function (x) { return x.r; });
+  }
+  function routeUrl(list, idx) {
+    var day = list[idx], v = day.v, prev = idx > 0 ? list[idx - 1].v : {};
+    var cityStart = v['Starts in'] || prev['Ends in'] || '', cityEnd = v['Ends in'] || cityStart;
+    var hotelPrev = idx > 0 ? planItems(prev.Date, 'Hotel')[0] : null, hotel = planItems(v.Date, 'Hotel')[0];
+    var oneCity = cityStart && cityStart === cityEnd ? cityStart : '';   // on a travel day the stops may be in either city: names only
+    var stops = dayStops(v.Date).map(function (r) { return stopText(r, oneCity); }).filter(Boolean);
+    var origin = hotelPrev ? stopText(hotelPrev, prev['Ends in'] || cityStart) : '', dest = hotel ? stopText(hotel, cityEnd) : '';   // last night's hotel is in the city where yesterday ended
+    if (!stops.length && !dest) return { error: 'Nothing to route on this day yet. Add places to Morning, Afternoon, Evening or Food, or a hotel to Sleeping at.' };
+    if (!dest) dest = stops.pop();                // no hotel tonight: the route ends at the last stop
+    var dropped = Math.max(0, stops.length - MAX_STOPS);
+    stops = stops.slice(0, MAX_STOPS);
+    var q = 'api=1&destination=' + encodeURIComponent(dest);
+    if (origin) q += '&origin=' + encodeURIComponent(origin);   // no origin: Google Maps starts where you are
+    if (stops.length) q += '&waypoints=' + stops.map(encodeURIComponent).join('%7C');
+    return { url: 'https://www.google.com/maps/dir/?' + q, dropped: dropped, count: stops.length + 1 + (origin ? 1 : 0) };
+  }
+  function openRoute(list, idx) {
+    var r = routeUrl(list, idx);
+    if (r.error) { toast(r.error); return; }
+    if (r.dropped) toast('Google Maps takes ' + MAX_STOPS + ' stops at most: the last ' + r.dropped + ' were left out');
+    window.open(r.url, '_blank', 'noopener');
+  }
+
   function linkBtn(label, url) { return /^https?:\/\//i.test(url || '') ? h('a', { class: 'linkbtn', href: url, target: '_blank', rel: 'noopener', text: label }) : null; }
   function tapPart(day, p, items) {               // nothing yet: straight to the form. Otherwise the list (or the one item)
     if (p.single) planForm(day, p, items[0] || null);
@@ -318,8 +369,8 @@
   }
   // what one row of another section offers to a day item
   function offer(t, r) {
-    var v = r.v, o = { name: t.title.map(function (x) { return v[x] || ''; }).filter(Boolean).join(t.sep || ' '), map: v['Map link'] || v['Map / booking link'] || '', web: v['Where to book (link)'] || '', time: v.Departs || v.Time || '' };
-    if (t.id === 'ideas' && v.Link) { if (isMap(v.Link)) o.map = v.Link; else o.web = v.Link; }
+    var v = r.v, o = { name: t.title.map(function (x) { return v[x] || ''; }).filter(Boolean).join(t.sep || ' '), map: cleanUrl(v['Map link'] || v['Map / booking link'] || ''), web: cleanUrl(v['Where to book (link)'] || ''), time: v.Departs || v.Time || '' };
+    if (t.id === 'ideas' && v.Link) { if (isMap(v.Link)) o.map = cleanUrl(v.Link); else o.web = cleanUrl(v.Link); }
     if (o.map && !isMap(o.map) && !o.web) { o.web = o.map; o.map = ''; }
     o.hint = [v.City, v['District / ward'], v.Type || v.Category].filter(Boolean).join(', ');
     return o;
@@ -519,7 +570,7 @@
   // ------------------------------------------------------------------ Ideas inbox: share, paste, move
   // a shared item is a name, a link, or both
   function parseShare(title, text, url) {
-    var all = [title, text, url].filter(Boolean).join('\n'), m = /https?:\/\/\S+/.exec(url || '') || /https?:\/\/\S+/.exec(all), link = m ? m[0] : '';
+    var all = [title, text, url].filter(Boolean).join('\n'), m = /https?:\/\/\S+/.exec(url || '') || /https?:\/\/\S+/.exec(all), link = m ? cleanUrl(m[0]) : '';
     var idea = all.replace(/https?:\/\/\S+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
     if (title && text && idea.indexOf(title + ' ' + title) === 0) idea = idea.slice(title.length + 1);
     if (!idea && link) idea = '(' + host(link) + ')';
@@ -567,7 +618,7 @@
       var d = def(t.sheet), preset = {}, linkCol = null, notes = v.Notes || '';
       d.cols.forEach(function (c) { if (!linkCol && c.k === 'link') linkCol = c.h; });
       preset[t.title[0]] = /^\(.*\)$/.test(name) ? '' : name;
-      if (v.Link) { if (linkCol) preset[linkCol] = v.Link; else notes = (notes ? notes + '\n' : '') + v.Link; }
+      if (v.Link) { if (linkCol) preset[linkCol] = cleanUrl(v.Link); else notes = (notes ? notes + '\n' : '') + cleanUrl(v.Link); }
       if (notes && col(t.sheet, 'Notes')) preset.Notes = notes;
       editFields(t.sheet, null, null, 'Add to ' + t.label, preset, function () { change('Ideas', rec, null, true); toast('Moved to ' + t.label); });
     }
